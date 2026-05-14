@@ -4,7 +4,6 @@ import argparse
 import sys
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
@@ -30,22 +29,38 @@ def load_data(path: str) -> pd.DataFrame:
             except Exception:
                 pass
 
+    # Normalize labels: convert to 0 (ham/no spam) and 1 (spam)
+    def normalize_label(x):
+        x_lower = str(x).lower().strip()
+        if x_lower in ['ham', '0', 'no spam', 'no', 'legitimate']:
+            return 0
+        elif x_lower in ['spam', '1', 'yes']:
+            return 1
+        else:
+            # Try to convert numeric values
+            try:
+                return int(float(x))
+            except:
+                return 1 if 'spam' in x_lower else 0
+
+    data['label'] = data['label'].apply(normalize_label)
+    
     return data
 
 
-def train_and_evaluate(data: pd.DataFrame, test_size: float = 0.2, random_state: int = 42):
-    """Train MultinomialNB on the text data and print evaluation metrics."""
+def train_and_evaluate(train_data: pd.DataFrame, test_data: pd.DataFrame, random_state: int = 42):
+    """Train MultinomialNB on training data and evaluate on test data."""
     # Ensure we have the expected columns
-    if 'label' not in data.columns or 'text' not in data.columns:
-        raise ValueError("Data must contain 'label' and 'text' columns")
+    if 'label' not in train_data.columns or 'text' not in train_data.columns:
+        raise ValueError("Training data must contain 'label' and 'text' columns")
+    if 'label' not in test_data.columns or 'text' not in test_data.columns:
+        raise ValueError("Test data must contain 'label' and 'text' columns")
 
     # Separate features and labels
-    X = data['text']
-    y = data['label']
-
-    # Split
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size,
-                                                        random_state=random_state)
+    X_train = train_data['text']
+    y_train = train_data['label']
+    X_test = test_data['text']
+    y_test = test_data['label']
 
     # Vectorize
     vectorizer = CountVectorizer()
@@ -95,18 +110,27 @@ def train_and_evaluate(data: pd.DataFrame, test_size: float = 0.2, random_state:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Email spam detection (Naive Bayes)')
-    parser.add_argument('--csv', type=str, default='dataset/combined_data.csv',
-                        help='Path to spam CSV file (default: dataset/spam.csv)')
-    parser.add_argument('--test-size', type=float, default=0.2, help='Test set fraction')
+    parser.add_argument('--train-csv', type=str, default='dataset/combined_data.csv',
+                        help='Path to training CSV file (default: dataset/combined_data.csv)')
+    parser.add_argument('--test-csv', type=str, default='dataset/spam.csv',
+                        help='Path to test CSV file (default: dataset/spam.csv)')
     args = parser.parse_args(argv)
 
-    data = load_data(args.csv)
-    print('Loaded data with shape:', data.shape)
+    # Load training data
+    print("Loading training data...")
+    train_data = load_data(args.train_csv)
+    print(f'Loaded training data with shape: {train_data.shape}')
+    print(f'Training label distribution:\n{train_data["label"].value_counts()}\n')
 
-    # Quick peek
-    print(data.head())
+    # Load test data
+    print("Loading test data...")
+    test_data = load_data(args.test_csv)
+    print(f'Loaded test data with shape: {test_data.shape}')
+    print(f'Test label distribution:\n{test_data["label"].value_counts()}\n')
 
-    train_and_evaluate(data, test_size=args.test_size)
+    # Train and evaluate
+    print("Training Naive Bayes classifier...")
+    train_and_evaluate(train_data, test_data)
 
 
 if __name__ == '__main__':
