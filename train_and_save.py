@@ -220,7 +220,7 @@ def train_distilbert(train_csv: str, test_csv: str,
 
         save_strategy="epoch",
 
-        save_total_limit=1,
+    save_total_limit=4,
         logging_steps=50,
 
         report_to="none",

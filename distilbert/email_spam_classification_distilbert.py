@@ -5,7 +5,7 @@ import pandas as pd
 import warnings
 import argparse
 from tqdm import tqdm
-
+from pathlib import Path
 warnings.filterwarnings("ignore")
 tqdm.pandas()
 
@@ -204,7 +204,8 @@ def main(argv=None):
             super().__init__(*args, **kwargs)
             self._ordered_weights = ordered_weights
 
-        def compute_loss(self, model, inputs, return_outputs=False):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            # Accept extra kwargs from Trainer (e.g. num_items_in_batch) for compatibility
             labels = inputs.get('labels')
             new_inputs = {k: v for k, v in inputs.items() if k != 'labels'}
             outputs = model(**new_inputs)
@@ -245,7 +246,10 @@ def main(argv=None):
         learning_rate=args.learning_rate,
         warmup_steps=args.warmup_steps,
         weight_decay=args.weight_decay,
-        save_total_limit=1,
+        evaluation_strategy='epoch',
+        save_strategy='epoch',
+        load_best_model_at_end=True,
+        save_total_limit=4,
         report_to='none',
     )
 

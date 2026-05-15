@@ -1,0 +1,47 @@
+{
+  "dataset": "dataset\\combined_data.csv",
+  "n_samples": 83448,
+  "results": {
+    "naive_bayes": {
+      "model": "naive_bayes",
+      "load_time_s": 0.3015151023864746,
+      "mem_before_mb": 314.27734375,
+      "mem_after_load_mb": 367.23828125,
+      "total_prediction_time_s": 0.04409027099609375,
+      "per_sample_latency_s": 5.2835623377545e-07,
+      "throughput_samples_per_s": 1892662.4426371343,
+      "precision": 0.9887457941756584,
+      "recall": 0.9703939877021179,
+      "f1": 0.9794839377047296,
+      "n_samples": 83448,
+      "saved_metrics": {
+        "Accuracy": 0.9763331336129418,
+        "Precision": 0.9882407730818489,
+        "Recall": 0.9665224322477796,
+        "F1-Score": 0.9772609521616488,
+        "ROC-AUC": 0.9951368113169359
+      }
+    },
+    "distilbert": {
+      "model": "distilbert",
+      "device": "cuda",
+      "load_time_s": 0.3392188549041748,
+      "mem_before_mb": 873.16015625,
+      "mem_after_load_mb": 994.94921875,
+      "total_prediction_time_s": 476.7117381095886,
+      "per_sample_latency_s": 0.005712680209347002,
+      "throughput_samples_per_s": 175.04918240720266,
+      "precision": 0.9936799508945825,
+      "recall": 0.9954224550216352,
+      "f1": 0.9945504397192169,
+      "n_samples": 83448,
+      "saved_metrics": {
+        "Accuracy": 0.9937687237866987,
+        "Precision": 0.9943039416723627,
+        "Recall": 0.993851058984286,
+        "F1-Score": 0.9940774487471526,
+        "ROC-AUC": 0.9994617055947541
+      }
+    }
+  }
+}
