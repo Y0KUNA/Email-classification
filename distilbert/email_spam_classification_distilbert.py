@@ -1,4 +1,3 @@
-
 import gc
 import re
 import numpy as np
@@ -9,6 +8,16 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 tqdm.pandas()
+
+
+def preprocess_text(text: str) -> str:
+    """Normalize text to match the preprocessing applied to combined_data.csv:
+    lowercase, replace digits with 'escapenumber', strip punctuation."""
+    text = str(text).lower()
+    text = re.sub(r'\d+', 'escapenumber', text)
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
 def load_and_preprocess(csv_path: str):
@@ -22,9 +31,8 @@ def load_and_preprocess(csv_path: str):
 
     # Standardize label and text columns
     if 'v1' in df.columns and 'v2' in df.columns:
-        # This is the spam.csv format
         df = df.rename(columns={'v1': 'label', 'v2': 'text'})
-    
+
     # Drop unnecessary columns if they exist
     for col in ['Unnamed: 2', 'Unnamed: 3', 'Unnamed: 4']:
         if col in df.columns:
@@ -50,7 +58,6 @@ def load_and_preprocess(csv_path: str):
         elif x_lower in ['spam', '1', 'yes']:
             return 'spam'
         else:
-            # Try numeric conversion
             try:
                 val = int(float(x))
                 return 'spam' if val > 0 else 'ham'
@@ -59,23 +66,29 @@ def load_and_preprocess(csv_path: str):
 
     df['label'] = df['label'].apply(normalize_label)
 
+    # Apply text preprocessing to align vocabulary with combined_data.csv format.
+    # combined_data.csv stores lowercased text with digits replaced by 'escapenumber'
+    # and punctuation removed. Applying the same pipeline here ensures the DistilBERT
+    # tokenizer sees the same token distribution at train and test time.
+    print("Preprocessing text...")
+    df['title'] = df['title'].progress_apply(preprocess_text)
+
     print('Data shape after preprocessing:', df.shape)
     return df
 
 
 def main(argv=None):
-    # Defer heavy imports to runtime so module import doesn't fail when packages are missing.
     import torch
     from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments, DataCollatorWithPadding, pipeline
     from datasets import Dataset, ClassLabel
     from sklearn.utils.class_weight import compute_class_weight
-    from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, f1_score
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, confusion_matrix, classification_report, f1_score
     import matplotlib.pyplot as plt
     import itertools
 
     parser = argparse.ArgumentParser(description='DistilBERT email spam training script')
-    parser.add_argument('--train-csv', type=str, default='dataset/combined_data.csv', help='Path to training CSV file')
-    parser.add_argument('--test-csv', type=str, default='dataset/spam.csv', help='Path to test CSV file')
+    parser.add_argument('--train-csv', type=str, default='dataset/combined_data.csv')
+    parser.add_argument('--test-csv', type=str, default='dataset/spam.csv')
     parser.add_argument('--num-train-epochs', type=int, default=5)
     parser.add_argument('--learning-rate', type=float, default=3e-6)
     parser.add_argument('--train-batch-size', type=int, default=8)
@@ -86,20 +99,37 @@ def main(argv=None):
     parser.add_argument('--output-dir', type=str, default='email-spam-detection-distilbert')
     args = parser.parse_args(argv)
 
-    # Load training data
     print("Loading training data from:", args.train_csv)
-    df_train_raw = load_and_preprocess(args.train_csv)
+    # If defaults are used (combined_data.csv + spam.csv), perform an 80/20 split on combined_data.csv
+    df_train_raw = None
+    df_test_raw = None
+    if Path(args.train_csv).name == 'combined_data.csv' and Path(args.test_csv).name == 'spam.csv':
+        print('  Using combined_data.csv - performing 80/20 stratified split for train/test...')
+        import pandas as pd
+        from sklearn.model_selection import train_test_split
+
+        df_all = load_and_preprocess(args.train_csv)
+        # Map labels to 0/1 for stratify, then restore text labels
+        df_all_temp = df_all.copy()
+        df_all_temp['label_num'] = df_all_temp['label'].apply(lambda x: 1 if str(x).lower().strip() == 'spam' else 0)
+        train_df, test_df = train_test_split(df_all_temp, test_size=0.2, stratify=df_all_temp['label_num'], random_state=42)
+        # drop helper column
+        train_df = train_df.drop(columns=['label_num']).reset_index(drop=True)
+        test_df = test_df.drop(columns=['label_num']).reset_index(drop=True)
+        df_train_raw = train_df
+        df_test_raw = test_df
+        print(f"  Split sizes: train={len(df_train_raw)}, test={len(df_test_raw)}")
+    else:
+        df_train_raw = load_and_preprocess(args.train_csv)
     print(f'Training data label distribution:\n{df_train_raw["label"].value_counts()}\n')
 
-    # Load test data
-    print("Loading test data from:", args.test_csv)
-    df_test_raw = load_and_preprocess(args.test_csv)
+    if df_test_raw is None:
+        print("Loading test data from:", args.test_csv)
+        df_test_raw = load_and_preprocess(args.test_csv)
     print(f'Test data label distribution:\n{df_test_raw["label"].value_counts()}\n')
 
-    # Combine for label mapping (to ensure consistent labels)
     df_combined = pd.concat([df_train_raw, df_test_raw], ignore_index=True)
 
-    # Compute class weights and mappings
     classes = np.unique(df_combined['label'])
     print('Classes found:', classes)
     weights = compute_class_weight(class_weight='balanced', classes=classes, y=df_combined['label'])
@@ -111,7 +141,6 @@ def main(argv=None):
     id2label = {i: label for label, i in label2id.items()}
     ordered_weigths = [class_weights[x] for x in id2label.values()]
 
-    # Create HF datasets from raw data
     train_dataset = Dataset.from_pandas(df_train_raw)
     test_dataset = Dataset.from_pandas(df_test_raw)
     ClassLabels = ClassLabel(num_classes=len(labels_list), names=labels_list)
@@ -122,7 +151,7 @@ def main(argv=None):
 
     train_dataset = train_dataset.map(map_label2id, batched=True)
     train_dataset = train_dataset.cast_column('label', ClassLabels)
-    
+
     test_dataset = test_dataset.map(map_label2id, batched=True)
     test_dataset = test_dataset.cast_column('label', ClassLabels)
 
@@ -159,7 +188,16 @@ def main(argv=None):
         logits, labels = eval_pred
         predictions = np.argmax(logits, axis=-1)
         accuracy = accuracy_score(labels, predictions)
-        return {'accuracy': accuracy}
+        if len(labels_list) == 2:
+            pos_label = label2id.get('spam', 1)
+            precision = precision_score(labels, predictions, pos_label=pos_label, zero_division=0)
+            recall = recall_score(labels, predictions, pos_label=pos_label, zero_division=0)
+            f1 = f1_score(labels, predictions, pos_label=pos_label, zero_division=0)
+        else:
+            precision = precision_score(labels, predictions, average='macro', zero_division=0)
+            recall = recall_score(labels, predictions, average='macro', zero_division=0)
+            f1 = f1_score(labels, predictions, average='macro', zero_division=0)
+        return {'accuracy': accuracy, 'precision': precision, 'recall': recall, 'f1': f1}
 
     class WeightedTrainer(Trainer):
         def __init__(self, *args, ordered_weights=None, **kwargs):
@@ -167,8 +205,9 @@ def main(argv=None):
             self._ordered_weights = ordered_weights
 
         def compute_loss(self, model, inputs, return_outputs=False):
-            labels = inputs.pop('labels')
-            outputs = model(**inputs)
+            labels = inputs.get('labels')
+            new_inputs = {k: v for k, v in inputs.items() if k != 'labels'}
+            outputs = model(**new_inputs)
             logits = outputs.get('logits')
             weight_tensor = None
             if self._ordered_weights is not None:
@@ -178,6 +217,7 @@ def main(argv=None):
             return (loss, outputs) if return_outputs else loss
 
     def plot_confusion_matrix(cm, classes, title='Confusion Matrix', cmap=plt.cm.Blues, figsize=(10, 8), is_norm=True):
+        import itertools
         plt.figure(figsize=figsize)
         plt.imshow(cm, interpolation='nearest', cmap=cmap)
         plt.title(title)
@@ -200,16 +240,11 @@ def main(argv=None):
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.train_batch_size,
         per_device_eval_batch_size=args.eval_batch_size,
-        logging_strategy='steps',
-        logging_first_step=True,
-        load_best_model_at_end=True,
         logging_steps=1,
+        logging_first_step=True,
         learning_rate=args.learning_rate,
-        evaluation_strategy='epoch',
         warmup_steps=args.warmup_steps,
         weight_decay=args.weight_decay,
-        eval_steps=1,
-        save_strategy='epoch',
         save_total_limit=1,
         report_to='none',
     )
@@ -240,8 +275,19 @@ def main(argv=None):
     y_pred = outputs.predictions.argmax(1)
 
     accuracy = accuracy_score(y_true, y_pred)
-    f1 = f1_score(y_true, y_pred, average='macro')
+    if len(labels_list) == 2:
+        pos_label = label2id.get('spam', 1)
+        precision = precision_score(y_true, y_pred, pos_label=pos_label, zero_division=0)
+        recall = recall_score(y_true, y_pred, pos_label=pos_label, zero_division=0)
+        f1 = f1_score(y_true, y_pred, pos_label=pos_label, zero_division=0)
+    else:
+        precision = precision_score(y_true, y_pred, average='macro', zero_division=0)
+        recall = recall_score(y_true, y_pred, average='macro', zero_division=0)
+        f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
+
     print(f"Accuracy: {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
     print(f"F1 Score: {f1:.4f}")
 
     if len(labels_list) <= 120:
@@ -264,3 +310,44 @@ def main(argv=None):
 
 if __name__ == '__main__':
     main()
+
+
+from transformers import pipeline
+from pathlib import Path
+
+MODEL_DIR = Path(__file__).resolve().parent.parent / "email-spam-detection-distilbert"
+
+_classifier = None
+
+
+def load_model():
+    global _classifier
+    if _classifier is None:
+        _classifier = pipeline(
+            "text-classification",
+            model=str(MODEL_DIR),
+            tokenizer=str(MODEL_DIR)
+        )
+    return _classifier
+
+
+def predict(texts):
+    # Apply the same preprocessing before inference
+    preprocessed = [preprocess_text(t) for t in texts]
+
+    classifier = load_model()
+    outputs = classifier(preprocessed, truncation=True, batch_size=32)
+
+    predictions = []
+    for item in outputs:
+        label = item["label"]
+        if isinstance(label, str):
+            label = label.lower()
+            if "label_1" in label or "spam" in label:
+                predictions.append(1)
+            else:
+                predictions.append(0)
+        else:
+            predictions.append(0)
+
+    return predictions

@@ -1,5 +1,4 @@
 
-
 import argparse
 import sys
 import numpy as np
@@ -8,7 +7,15 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
+import re
+from pathlib import Path
 
+def preprocess_text(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r'\d+', 'escapenumber', text)
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 def load_data(path: str) -> pd.DataFrame:
     """Load CSV and perform minimal cleaning to match the notebook expectations."""
     data = pd.read_csv(path, encoding='latin-1')
@@ -57,9 +64,9 @@ def train_and_evaluate(train_data: pd.DataFrame, test_data: pd.DataFrame, random
         raise ValueError("Test data must contain 'label' and 'text' columns")
 
     # Separate features and labels
-    X_train = train_data['text']
+    X_train = train_data['text'].apply(preprocess_text)
     y_train = train_data['label']
-    X_test = test_data['text']
+    X_test = test_data['text'].apply(preprocess_text)
     y_test = test_data['label']
 
     # Vectorize
@@ -107,7 +114,42 @@ def train_and_evaluate(train_data: pd.DataFrame, test_data: pd.DataFrame, random
         # If matplotlib is not available or plotting fails, ignore plotting.
         pass
 
+_model = None
+_vectorizer = None
 
+
+def load_model():
+
+    global _model
+    global _vectorizer
+
+    if _model is not None:
+        return _model, _vectorizer
+
+    import joblib
+    from pathlib import Path
+
+    ROOT = Path(__file__).resolve().parent
+
+    model_path = ROOT / "naive_bayes_model.pkl"
+    vectorizer_path = ROOT / "count_vectorizer.pkl"
+
+    _model = joblib.load(model_path)
+
+    _vectorizer = joblib.load(vectorizer_path)
+
+    return _model, _vectorizer
+
+
+def predict(texts):
+
+    model, vectorizer = load_model()
+
+    X = vectorizer.transform(texts)
+
+    preds = model.predict(X)
+
+    return preds.tolist()
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Email spam detection (Naive Bayes)')
     parser.add_argument('--train-csv', type=str, default='dataset/combined_data.csv',
@@ -118,13 +160,52 @@ def main(argv=None):
 
     # Load training data
     print("Loading training data...")
-    train_data = load_data(args.train_csv)
+    # If user left defaults (combined_data.csv) and didn't supply a separate test CSV,
+    # perform a stratified 80/20 split on combined_data.csv to get train/test.
+    train_csv = args.train_csv
+    test_csv = args.test_csv
+    temp_train = None
+    temp_test = None
+    if Path(train_csv).name == 'combined_data.csv' and Path(test_csv).name == 'spam.csv':
+        print('  No explicit test provided: splitting combined_data.csv 80/20...')
+        import pandas as pd
+        from sklearn.model_selection import train_test_split
+
+        df = pd.read_csv(train_csv, encoding='latin-1')
+        for col in ['Unnamed: 2', 'Unnamed: 3', 'Unnamed: 4']:
+            if col in df.columns:
+                df = df.drop(columns=[col])
+        if 'v1' in df.columns and 'v2' in df.columns:
+            df = df.rename(columns={'v1': 'label', 'v2': 'text'})
+        if 'label' not in df.columns or 'text' not in df.columns:
+            cols = list(df.columns[:2])
+            df = df.rename(columns={cols[0]: 'label', cols[1]: 'text'})
+
+        def norm(x):
+            s = str(x).lower().strip()
+            if s in ('ham', '0', 'no spam', 'no', 'legitimate'):
+                return 0
+            if s in ('spam', '1', 'yes'):
+                return 1
+            try:
+                return int(float(x))
+            except Exception:
+                return 1 if 'spam' in s else 0
+
+        df['label'] = df['label'].apply(norm)
+        df = df.dropna(subset=['label', 'text']).reset_index(drop=True)
+        train_df, test_df = train_test_split(df, test_size=0.2, stratify=df['label'], random_state=42)
+        train_data = train_df
+        test_data = test_df
+    else:
+        train_data = load_data(args.train_csv)
     print(f'Loaded training data with shape: {train_data.shape}')
     print(f'Training label distribution:\n{train_data["label"].value_counts()}\n')
 
-    # Load test data
-    print("Loading test data...")
-    test_data = load_data(args.test_csv)
+    # Load test data (unless already created from split)
+    if 'test_data' not in locals():
+        print("Loading test data...")
+        test_data = load_data(args.test_csv)
     print(f'Loaded test data with shape: {test_data.shape}')
     print(f'Test label distribution:\n{test_data["label"].value_counts()}\n')
 
