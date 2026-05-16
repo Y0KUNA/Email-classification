@@ -79,6 +79,8 @@ class SpamApp(tk.Tk):
         self.geometry('760x560')
         self.loader = ModelLoader()
         self._build()
+        # Start background auto-load of models when the app starts
+        threading.Thread(target=self._auto_load_models, daemon=True).start()
 
     def _build(self):
         frm = ttk.Frame(self, padding=12)
@@ -121,6 +123,27 @@ class SpamApp(tk.Tk):
                 messagebox.showwarning('DistilBERT', f'Failed to load DistilBERT: {e}')
             messagebox.showinfo('Done', 'Model load attempts finished')
         threading.Thread(target=task, daemon=True).start()
+
+    def _auto_load_models(self):
+        """Background loader run at startup; updates status without modal dialogs."""
+        msgs = []
+        try:
+            self.loader.load_naive_bayes()
+            msgs.append('Naive Bayes loaded')
+        except Exception as e:
+            msgs.append(f'Naive Bayes failed: {e}')
+        try:
+            self.loader.load_distilbert()
+            msgs.append('DistilBERT loaded')
+        except Exception as e:
+            msgs.append(f'DistilBERT failed: {e}')
+
+        status = ' | '.join(msgs)
+        # Update UI from main thread
+        try:
+            self.after(0, lambda: self.result_var.set(status))
+        except Exception:
+            pass
 
     def _on_predict(self):
         text = self.txt.get('1.0', 'end').strip()
