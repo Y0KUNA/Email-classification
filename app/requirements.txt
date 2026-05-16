@@ -1,0 +1,4 @@
+transformers>=4.0.0
+torch>=1.13; platform_system == "Windows"
+joblib
+scikit-learn

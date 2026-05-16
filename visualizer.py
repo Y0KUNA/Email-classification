@@ -411,7 +411,8 @@ def chart_summary_table(nb_m: dict, bert_m: dict, output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-csv",   default="dataset/spam.csv")
+    parser.add_argument("--test-csv",   default=None,
+                        help="Path to test CSV. If omitted, uses dataset/test_2000.csv when present, otherwise dataset/spam.csv")
     parser.add_argument("--nb-dir",     default="naive_bayes")
     parser.add_argument("--bert-dir",   default="distilbert")
     parser.add_argument("--output-dir", default="outputs")
@@ -419,7 +420,16 @@ def main():
                         help="Bo qua DistilBERT")
     args = parser.parse_args()
 
-    test_csv   = ROOT / args.test_csv
+    # Determine test CSV: prefer explicit --test-csv; if not provided use dataset/test_2000.csv when available,
+    # otherwise fall back to dataset/spam.csv (legacy behavior)
+    if args.test_csv:
+        test_csv = ROOT / args.test_csv
+    else:
+        candidate = ROOT / "dataset" / "test_2000.csv"
+        if candidate.exists():
+            test_csv = candidate
+        else:
+            test_csv = ROOT / "dataset" / "spam.csv"
     nb_dir     = ROOT / args.nb_dir
     bert_dir   = ROOT / args.bert_dir
     output_dir = ROOT / args.output_dir
@@ -436,9 +446,10 @@ def main():
     if not test_csv.exists():
         print(f"  ERROR: Khong tim thay {test_csv}")
         sys.exit(1)
-    # If the test path is the default spam.csv but combined_data.csv exists, perform an 80/20 split
+    # If the user did NOT provide --test-csv and combined_data.csv exists, perform an 80/20 split
     combined_path = ROOT / "dataset" / "combined_data.csv"
-    if Path(test_csv).name == "spam.csv" and combined_path.exists():
+    # Note: if the user explicitly provided --test-csv we will always use it and not auto-split
+    if getattr(args, 'test_csv', None) is None and Path(test_csv).name == "spam.csv" and combined_path.exists():
         print("  Found combined_data.csv - performing 80/20 stratified split and using the 20% test split for evaluation")
         import pandas as pd
         from sklearn.model_selection import train_test_split
